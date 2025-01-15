@@ -1,0 +1,148 @@
+import cv2
+import numpy as np
+
+def correct_qr_perspective(input_image_path, output_image_path):
+    # Đọc ảnh từ file
+    image = cv2.imread(input_image_path)
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    
+    # Áp dụng threshold để làm nổi bật mã QR
+    _, binary = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)
+
+    # Phát hiện các contours
+    contours, _ = cv2.findContours(binary, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+
+    qr_contour = None
+    for contour in contours:
+        approx = cv2.approxPolyDP(contour, 0.02 * cv2.arcLength(contour, True), True)
+        if len(approx) == 4 and cv2.isContourConvex(approx):
+            area = cv2.contourArea(approx)
+            if area > 1000:  # Lọc theo diện tích đủ lớn
+                qr_contour = approx
+                break
+
+    if qr_contour is None:
+        print("Không tìm thấy mã QR.")
+        return
+
+    # Lấy các điểm góc của mã QR
+    points = qr_contour.reshape(4, 2)
+    rect = np.zeros((4, 2), dtype="float32")
+
+    # Sắp xếp lại các góc theo thứ tự TL, TR, BR, BL
+    s = points.sum(axis=1)
+    rect[0] = points[np.argmin(s)]  # Top-left
+    rect[2] = points[np.argmax(s)]  # Bottom-right
+
+    diff = np.diff(points, axis=1)
+    rect[1] = points[np.argmin(diff)]  # Top-right
+    rect[3] = points[np.argmax(diff)]  # Bottom-left
+
+    # Tính kích thước đầu ra: dùng giá trị lớn nhất để đảm bảo đầu ra vuông
+    width_a = np.linalg.norm(rect[1] - rect[0])
+    width_b = np.linalg.norm(rect[3] - rect[2])
+    height_a = np.linalg.norm(rect[0] - rect[3])
+    height_b = np.linalg.norm(rect[1] - rect[2])
+
+    max_side = int(max(width_a, width_b, height_a, height_b))
+
+    dst = np.array(
+        [
+            [0, 0],
+            [max_side - 1, 0],
+            [max_side - 1, max_side - 1],
+            [0, max_side - 1],
+        ],
+        dtype="float32",
+    )
+
+    # Áp dụng biến đổi phối cảnh
+    matrix = cv2.getPerspectiveTransform(rect, dst)
+    warped = cv2.warpPerspective(image, matrix, (max_side, max_side))
+
+    # Làm mượt ảnh trước khi threshold
+    warped_gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
+    warped_blurred = cv2.GaussianBlur(warped_gray, (5, 5), 0)
+    
+    # Áp dụng threshold để chuyển thành ảnh trắng đen
+    _, warped_binary = cv2.threshold(warped_blurred, 127, 255, cv2.THRESH_BINARY)
+
+    # Áp dụng phép toán Morphological để làm thẳng cạnh
+    kernel = np.ones((3, 3), np.uint8)
+    warped_binary = cv2.morphologyEx(warped_binary, cv2.MORPH_CLOSE, kernel)
+
+    # Lưu ảnh đầu ra tạm thời
+    temp_output_path = "temp_output.png"
+    cv2.imwrite(temp_output_path, warped_binary)
+
+    print(f"Ảnh QR đã chỉnh sửa được lưu tại {temp_output_path}.")
+
+    # Đọc file ảnh mã QR đã chỉnh sửa
+    qr_image = cv2.imread(temp_output_path)
+
+    # Chuyển ảnh sang grayscale để xác định vùng mã QR
+    gray_image = cv2.cvtColor(qr_image, cv2.COLOR_BGR2GRAY)
+
+    # Tìm contour lớn nhất (giả định đó là vùng mã QR)
+    _, thresh = cv2.threshold(gray_image, 240, 255, cv2.THRESH_BINARY_INV)
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    if not contours:
+        print("Không tìm thấy vùng mã QR trong ảnh.")
+        return
+
+    # Lấy contour lớn nhất
+    qr_contour = max(contours, key=cv2.contourArea)
+
+    # Tìm bounding box của vùng mã QR
+    x, y, w, h = cv2.boundingRect(qr_contour)
+
+    # Crop vùng mã QR từ ảnh gốc
+    qr_region = qr_image[y:y+h, x:x+w]
+
+    # Lấy kích thước của vùng mã QR
+    height, width, _ = qr_region.shape
+
+    # Số ô vuông trên 1 hàng của lưới
+    grid_size = 41
+
+    # Tạo một bản sao của vùng mã QR để xử lý
+    overlay_image = qr_region.copy()
+
+    # Tính kích thước của mỗi ô vuông
+    cell_height = height / grid_size
+    cell_width = width / grid_size
+
+    # Kiểm tra màu trong từng ô và tô màu tương ứng
+    for row in range(grid_size):
+        for col in range(grid_size):
+            # Xác định tọạ độ của ô vuông hiện tại
+            start_x = int(col * cell_width)
+            start_y = int(row * cell_height)
+            end_x = int((col + 1) * cell_width)
+            end_y = int((row + 1) * cell_height)
+
+            # Crop vùng nhỏ tương ứng với ô vuông
+            cell_region = gray_image[y+start_y:y+end_y, x+start_x:x+end_x]
+
+            # Đếm số pixel màu đen và màu trắng trong ô
+            black_count = np.sum(cell_region < 128)
+            white_count = np.sum(cell_region >= 128)
+
+            # Xác định màu cho ô dựa trên số lượng pixel
+            if black_count > white_count:
+                overlay_image[start_y:end_y, start_x:end_x] = (0, 0, 0)  # Đen
+            else:
+                overlay_image[start_y:end_y, start_x:end_x] = (255, 255, 255)  # Trắng
+
+    # Chèn lại vùng QR đã xử lý vào ảnh gốc
+    qr_image[y:y+h, x:x+w] = overlay_image
+
+    # Lưu ảnh mới không có lưới
+    cv2.imwrite(output_image_path, qr_image)
+    print(f"Ảnh không có lưới đã được lưu tại {output_image_path}")
+
+# file ảnh vào và xuất ra
+input_image_path = "distorted_qrcode1.png"
+output_image_path = "image_1a_sau_chuyen_doi.png"
+correct_qr_perspective(input_image_path, output_image_path)
