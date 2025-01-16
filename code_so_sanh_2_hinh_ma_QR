@@ -1,0 +1,76 @@
+import cv2
+from pyzbar.pyzbar import decode
+from skimage.metrics import structural_similarity as ssim
+import numpy as np
+
+def extract_qr_code_region(image_path):
+    """
+    Phát hiện và cắt phần mã QR từ ảnh.
+    """
+    image = cv2.imread(image_path)
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    decoded_objects = decode(image)
+    if len(decoded_objects) == 0:
+        print(f"Không phát hiện được mã QR trong ảnh {image_path}")
+        return None, None, None
+    
+    qr = decoded_objects[0]
+    x, y, w, h = qr.rect
+    qr_region = gray[y:y+h, x:x+w]
+    return qr_region, qr.data.decode('utf-8'), (x, y, w, h)
+
+def compare_qr_codes_with_highlight(image1_path, image2_path, output_path="difference_highlight.png"):
+    """
+    So sánh độ khớp nhau giữa hai mã QR từ hai ảnh và đánh dấu sự khác biệt.
+    """
+    qr1, data1, rect1 = extract_qr_code_region(image1_path)
+    qr2, data2, rect2 = extract_qr_code_region(image2_path)
+    
+    if qr1 is None or qr2 is None:
+        return 0.0  # Không thể so sánh nếu một trong hai ảnh không có mã QR
+
+    # So sánh nội dung nếu cả hai mã QR đều được giải mã
+    if data1 == data2:
+        print("Nội dung mã QR trùng khớp.")
+    else:
+        print("Nội dung mã QR không trùng khớp.")
+    
+    # Đưa cả hai ảnh về cùng kích thước để so sánh
+    h = min(qr1.shape[0], qr2.shape[0])
+    w = min(qr1.shape[1], qr2.shape[1])
+    qr1_resized = cv2.resize(qr1, (w, h))
+    qr2_resized = cv2.resize(qr2, (w, h))
+    
+    # Tính độ khớp bằng SSIM
+    similarity, diff = ssim(qr1_resized, qr2_resized, full=True)
+    diff = (diff * 255).astype("uint8")  # Chuẩn hóa ảnh khác biệt
+    
+    # Tìm vùng khác biệt
+    thresh = cv2.threshold(diff, 50, 255, cv2.THRESH_BINARY_INV)[1]
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    # Đọc ảnh gốc để hiển thị
+    original_image1 = cv2.imread(image1_path)
+    original_image2 = cv2.imread(image2_path)
+    
+    # Tô sáng vùng khác biệt trên cả hai ảnh
+    for contour in contours:
+        if cv2.contourArea(contour) > 10:  # Bỏ qua các khác biệt nhỏ
+            (x, y, w, h) = cv2.boundingRect(contour)
+            cv2.rectangle(original_image1, (x, y), (x + w, y + h), (0, 0, 255), 2)
+            cv2.rectangle(original_image2, (x, y), (x + w, y + h), (0, 0, 255), 2)
+    
+    # Ghép hai ảnh với vùng khác biệt
+    highlighted_diff = np.hstack((original_image1, original_image2))
+    cv2.imwrite(output_path, highlighted_diff)
+    print(f"Đã lưu ảnh với vùng khác biệt được tô sáng tại: {output_path}")
+    
+    return similarity
+
+# Đường dẫn đến hai ảnh
+image1_path = "qr_code_original.png"
+image2_path = "image_1a_sau_chuyen_doi.png"
+
+# So sánh và tô sáng khác biệt
+similarity_score = compare_qr_codes_with_highlight(image1_path, image2_path)
+print(f"Độ khớp giữa hai mã QR: {similarity_score:.2f}")
