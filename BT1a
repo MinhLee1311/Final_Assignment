@@ -44,21 +44,22 @@ def correct_qr_perspective(input_image_path, output_image_path):
     height_a = np.linalg.norm(rect[0] - rect[3])
     height_b = np.linalg.norm(rect[1] - rect[2])
 
-    max_side = int(max(width_a, width_b, height_a, height_b))
+     # Lấy kích thước ảnh gốc
+    height, width = image.shape[:2]
 
     dst = np.array(
         [
             [0, 0],
-            [max_side - 1, 0],
-            [max_side - 1, max_side - 1],
-            [0, max_side - 1],
+            [width - 1, 0],
+            [width - 1, height - 1],
+            [0, height - 1],
         ],
         dtype="float32",
     )
-
-    # Áp dụng biến đổi phối cảnh
+   
+      # Áp dụng biến đổi phối cảnh
     matrix = cv2.getPerspectiveTransform(rect, dst)
-    warped = cv2.warpPerspective(image, matrix, (max_side, max_side))
+    warped = cv2.warpPerspective(image, matrix, (width, height))
 
     # Làm mượt ảnh trước khi threshold
     warped_gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
