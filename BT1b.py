@@ -26,7 +26,7 @@ qr_contour = max(contours, key=cv2.contourArea)
 x, y, w, h = cv2.boundingRect(qr_contour)
 
 # Padding để khung lưới di chuyển vào trong
-padding = 5  # căn chỉnh vị trí khung lưới bao phủ
+padding = 4  # căn chỉnh vị trí khung lưới bao phủ
 
 # Điều chỉnh bounding box
 x += padding
