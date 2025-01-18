@@ -1,0 +1,143 @@
+import tkinter as tk
+from tkinter import *
+from tkinter import messagebox
+import qrcode
+from PIL import Image, ImageTk
+import cv2
+import csv
+from datetime import datetime
+import threading
+
+# Khởi tạo ứng dụng
+root = tk.Tk()
+root.title("Ứng dụng điểm danh sinh viên")
+root.geometry("600x400")
+
+# Hàm lưu thông tin vào file CSV
+def save_to_csv(filename, data):
+    with open(filename, mode='a', newline='', encoding='utf-8') as file:
+        writer = csv.writer(file)
+        writer.writerow(data)
+
+# File lưu danh sách điểm danh
+attendance_file = "attendance.csv"
+
+# Ghi header vào file CSV nếu chưa tồn tại
+try:
+    with open(attendance_file, mode='x', newline='', encoding='utf-8') as file:
+        writer = csv.writer(file)
+        writer.writerow(["Ngày", "Tên", "MSSV"])
+except FileExistsError:
+    pass
+
+# Hàm tạo mã QR
+def open_qr_generator():
+    def create_qr():
+        x = entry.get()
+        if not x.strip():
+            messagebox.showerror("Lỗi", "Vui lòng nhập nội dung để tạo mã QR!")
+            return
+        y = qrcode.make(x)
+        y.save("myqr.jpg")
+        photo = Image.open("myqr.jpg")
+        ph = ImageTk.PhotoImage(photo)
+        qr_label.config(image=ph)
+        qr_label.image = ph
+
+    def back_to_main():
+        qr_window.destroy()
+
+    qr_window = Toplevel(root)
+    qr_window.title("Tạo mã QR")
+    qr_window.geometry("500x500")
+
+    Label(qr_window, text="Nhập nội dung để tạo mã QR (không dấu). vd: 21200212, ABC").pack(pady=10)
+    entry = Entry(qr_window, width=40)
+    entry.pack(pady=5)
+
+    button_frame = Frame(qr_window)
+    button_frame.pack(pady=10)
+
+    Button(button_frame, text="Tạo mã QR", command=create_qr).pack(side=LEFT, padx=10)
+    Button(button_frame, text="Thoát", command=back_to_main).pack(side=RIGHT, padx=10)
+
+    qr_label = Label(qr_window)
+    qr_label.pack(pady=10)
+
+# Hàm quét mã QR
+def open_qr_scanner():
+    scanner_window = Toplevel(root)
+    scanner_window.title("Quét mã QR")
+    scanner_window.geometry("600x400")
+
+    msg_label = Label(scanner_window, text="Bắt đầu quét mã QR...", font=("Arial", 12))
+    msg_label.pack(pady=20)
+
+    def close_scanner():
+        nonlocal running
+        running = False
+        scanner_window.destroy()
+
+    Button(scanner_window, text="Thoát", command=close_scanner).pack(pady=10)
+
+    scanned_students = set()
+
+    # Tải danh sách MSSV đã quét từ file
+    try:
+        with open(attendance_file, mode='r', encoding='utf-8') as file:
+            reader = csv.reader(file)
+            next(reader)  # Bỏ qua header
+            for row in reader:
+                if len(row) > 2:
+                    scanned_students.add(row[2])
+    except FileNotFoundError:
+        pass
+
+    def scan_qr():
+        video = cv2.VideoCapture(0)
+        detector = cv2.QRCodeDetector()
+        last_scanned = None  # Lưu MSSV vừa quét
+
+        while running:
+            success, frame = video.read()
+            if not success:
+                break
+
+            data, coords, pixels = detector.detectAndDecode(frame)
+            if data:
+                try:
+                    name, mssv = data.split(", ")
+                except ValueError:
+                    msg_label.config(text="Dữ liệu không hợp lệ. Vui lòng quét mã hợp lệ!")
+                    continue
+
+                if mssv == last_scanned:
+                    continue
+
+                if mssv in scanned_students:
+                    msg_label.config(text=f"Sinh viên {name} - {mssv} đã được điểm danh trước đó.")
+                else:
+                    today = datetime.now().strftime("%Y-%m-%d")
+                    save_to_csv(attendance_file, [today, name, mssv])
+                    scanned_students.add(mssv)
+                    msg_label.config(text=f"Đã điểm danh: {name} - {mssv}")
+
+                last_scanned = mssv
+
+            cv2.imshow('Quét mã QR', frame)
+            if cv2.waitKey(1) == ord('q'):
+                break
+
+        video.release()
+        cv2.destroyAllWindows()
+
+    running = True
+    threading.Thread(target=scan_qr, daemon=True).start()
+
+# Giao diện chính
+Label(root, text="Ứng dụng điểm danh sinh viên", font=("Arial", 16)).pack(pady=20)
+Button(root, text="Tạo mã QR", width=20, command=open_qr_generator).pack(pady=10)
+Button(root, text="Quét mã QR để điểm danh", width=20, command=open_qr_scanner).pack(pady=10)
+
+# Chạy ứng dụng
+root.mainloop()
